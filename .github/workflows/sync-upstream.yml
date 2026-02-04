@@ -1,0 +1,57 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # Runs at 6 AM UTC every day
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/openclaw/openclaw.git || true
+          git fetch upstream
+
+      - name: Merge upstream changes
+        id: merge
+        run: |
+          # Try to merge upstream/main
+          if git merge upstream/main --no-edit; then
+            echo "merge_status=success" >> $GITHUB_OUTPUT
+            
+            # Check if there are changes to push
+            if git diff --quiet HEAD origin/main; then
+              echo "No new changes to push"
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+            else
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "merge_status=conflict" >> $GITHUB_OUTPUT
+            git merge --abort
+          fi
+
+      - name: Push changes
+        if: steps.merge.outputs.merge_status == 'success' && steps.merge.outputs.has_changes == 'true'
+        run: git push origin main
+
+      - name: Notify on conflict
+        if: steps.merge.outputs.merge_status == 'conflict'
+        run: |
+          echo "::warning::Merge conflict detected! Manual intervention required."
+          echo "Please run: git fetch upstream && git merge upstream/main"
+          exit 1
